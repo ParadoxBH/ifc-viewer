@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Box, Typography, LinearProgress, Paper } from '@mui/material';
 import { AnimatePresence } from 'framer-motion';
 import Header from './components/Header';
-import Sidebar from './components/Sidebar';
+import LocationPanel from './components/LocationPanel';
 import IFCViewer from './components/IFCViewer';
 import { useIFC } from './hooks/useIFC';
 import type { GeospatialState } from './types';
@@ -92,13 +92,11 @@ const App: React.FC = () => {
         </Box>
 
         <AnimatePresence>
-          {model && (
-            <Sidebar 
-              state={geospatial} 
-              onChange={setGeospatial} 
-              onReset={handleReset} 
-            />
-          )}
+          <LocationPanel 
+            state={geospatial} 
+            onChange={setGeospatial} 
+            onReset={handleReset} 
+          />
         </AnimatePresence>
       </Box>
     </Box>

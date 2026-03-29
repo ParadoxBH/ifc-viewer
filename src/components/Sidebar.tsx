@@ -14,8 +14,15 @@ interface SidebarProps {
 
 const Sidebar: React.FC<SidebarProps> = ({ state, onChange, onReset }) => {
   const handleChange = (field: keyof GeospatialState) => (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = parseFloat(e.target.value);
-    onChange({ ...state, [field]: isNaN(value) ? 0 : value });
+    const value = e.target.value;
+    const numericValue = parseFloat(value);
+    
+    // For numeric fields, use the parsed value, otherwise use the string value
+    if (typeof state[field] === 'number') {
+      onChange({ ...state, [field]: isNaN(numericValue) ? 0 : numericValue });
+    } else {
+      onChange({ ...state, [field]: value });
+    }
   };
 
   return (
@@ -128,6 +135,58 @@ const Sidebar: React.FC<SidebarProps> = ({ state, onChange, onReset }) => {
           />
         </Box>
       </Stack>
+
+      <Box sx={{ mt: 4, mb: 2 }}>
+        <Divider sx={{ mb: 2, opacity: 0.1 }}>
+          <Typography variant="overline" color="primary" sx={{ px: 1 }}>CRS Definition</Typography>
+        </Divider>
+        
+        <Stack spacing={2}>
+          <Box>
+            <Typography variant="caption" sx={{ opacity: 0.7, display: 'block', mb: 0.5 }}>CRS Name (EPSG)</Typography>
+            <TextField
+              fullWidth
+              size="small"
+              value={state.crsName}
+              onChange={handleChange('crsName')}
+              placeholder="e.g. EPSG:3857"
+            />
+          </Box>
+
+          <Box>
+            <Typography variant="caption" sx={{ opacity: 0.7, display: 'block', mb: 0.5 }}>Description</Typography>
+            <TextField
+              fullWidth
+              size="small"
+              multiline
+              rows={2}
+              value={state.crsDescription}
+              onChange={handleChange('crsDescription')}
+            />
+          </Box>
+
+          <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
+            <Box>
+              <Typography variant="caption" sx={{ opacity: 0.7, display: 'block', mb: 0.5 }}>Datum</Typography>
+              <TextField
+                fullWidth
+                size="small"
+                value={state.geodeticDatum}
+                onChange={handleChange('geodeticDatum')}
+              />
+            </Box>
+            <Box>
+              <Typography variant="caption" sx={{ opacity: 0.7, display: 'block', mb: 0.5 }}>Projection</Typography>
+              <TextField
+                fullWidth
+                size="small"
+                value={state.mapProjection}
+                onChange={handleChange('mapProjection')}
+              />
+            </Box>
+          </Box>
+        </Stack>
+      </Box>
 
       <Box sx={{ flexGrow: 1 }} />
 

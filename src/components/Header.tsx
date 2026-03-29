@@ -72,14 +72,22 @@ const Header: React.FC<HeaderProps> = ({ onUpload, onDownload, onTemplateSelect,
           </Button>
 
           <Button
-            variant="outlined"
-            color="primary"
+            variant="contained"
+            color="success"
             startIcon={<DownloadIcon />}
             onClick={onDownload}
             disabled={!isModelLoaded}
-            sx={{ borderColor: 'primary.main', '&:hover': { background: 'rgba(0, 229, 255, 0.1)' } }}
+            sx={{ 
+              borderRadius: 2, 
+              fontWeight: 700,
+              boxShadow: '0 4px 14px 0 rgba(0, 200, 83, 0.39)',
+              '&:hover': { 
+                bgcolor: 'success.dark',
+                boxShadow: '0 6px 20px rgba(0, 200, 83, 0.23)' 
+              } 
+            }}
           >
-            Download
+            Export IFC
           </Button>
 
           <Tooltip title="View Source on GitHub">

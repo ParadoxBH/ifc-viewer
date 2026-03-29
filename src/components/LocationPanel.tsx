@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Box, 
   Typography, 
@@ -12,6 +12,8 @@ import {
   IconButton
 } from '@mui/material';
 import { motion } from 'framer-motion';
+import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from 'react-leaflet';
+import L from 'leaflet';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import MapIcon from '@mui/icons-material/Map';
@@ -23,13 +25,46 @@ import SettingsInputComponentIcon from '@mui/icons-material/SettingsInputCompone
 
 import type { GeospatialState } from '../types';
 
+// Fix for default marker icon in Leaflet + Webpack/Vite
+import icon from 'leaflet/dist/images/marker-icon.png';
+import iconShadow from 'leaflet/dist/images/marker-shadow.png';
+
+let DefaultIcon = L.icon({
+  iconUrl: icon,
+  shadowUrl: iconShadow,
+  iconSize: [25, 41],
+  iconAnchor: [12, 41]
+});
+
+L.Marker.prototype.options.icon = DefaultIcon;
+
 interface LocationPanelProps {
   state: GeospatialState;
   onChange: (newState: GeospatialState) => void;
   onReset: () => void;
+  getMetadataPreview: (state: GeospatialState) => { ifcSite: string; ifcMapConversion: string } | null;
 }
 
-const LocationPanel: React.FC<LocationPanelProps> = ({ state, onChange, onReset }) => {
+// Component to handle map clicks
+const MapEvents = ({ onLocationSelect }: { onLocationSelect: (lat: number, lon: number) => void }) => {
+  useMapEvents({
+    click(e) {
+      onLocationSelect(e.latlng.lat, e.latlng.lng);
+    },
+  });
+  return null;
+};
+
+// Component to handle auto-centering
+const RecenterMap = ({ lat, lon }: { lat: number, lon: number }) => {
+  const map = useMap();
+  useEffect(() => {
+    map.setView([lat, lon], map.getZoom());
+  }, [lat, lon, map]);
+  return null;
+};
+
+const LocationPanel: React.FC<LocationPanelProps> = ({ state, onChange, onReset, getMetadataPreview }) => {
   const [expanded, setExpanded] = useState<string | false>('geographic');
 
   const handleAccordionChange = (panel: string) => (_event: React.SyntheticEvent, isExpanded: boolean) => {
@@ -45,6 +80,10 @@ const LocationPanel: React.FC<LocationPanelProps> = ({ state, onChange, onReset 
     } else {
       onChange({ ...state, [field]: value });
     }
+  };
+
+  const onLocationSelect = (lat: number, lon: number) => {
+    onChange({ ...state, latitude: lat, longitude: lon });
   };
 
   const handleGetCurrentLocation = () => {
@@ -219,6 +258,30 @@ const LocationPanel: React.FC<LocationPanelProps> = ({ state, onChange, onReset 
                   inputProps={{ step: 0.000001 }}
                 />
               </Box>
+
+              <Box sx={{ height: 200, mt: 1, borderRadius: 2, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)' }}>
+                <MapContainer
+                  center={[state.latitude, state.longitude]}
+                  zoom={13}
+                  scrollWheelZoom={true}
+                  style={{ height: '100%', width: '100%' }}
+                >
+                  <TileLayer
+                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  />
+                  <Marker position={[state.latitude, state.longitude]} draggable={true} eventHandlers={{
+                    dragend: (e) => {
+                      const marker = e.target;
+                      const position = marker.getLatLng();
+                      onLocationSelect(position.lat, position.lng);
+                    }
+                  }} />
+                  <MapEvents onLocationSelect={onLocationSelect} />
+                  <RecenterMap lat={state.latitude} lon={state.longitude} />
+                </MapContainer>
+              </Box>
+
               <Button 
                 variant="outlined" 
                 size="small" 
@@ -293,6 +356,51 @@ const LocationPanel: React.FC<LocationPanelProps> = ({ state, onChange, onReset 
       </Box>
 
       <Box sx={{ p: 2, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+        
+        {/* Metadata Preview Section */}
+        {(() => {
+          const preview = getMetadataPreview(state);
+          if (!preview) return null;
+          
+          return (
+            <Box 
+              sx={{ 
+                mb: 3, 
+                p: 2, 
+                bgcolor: 'rgba(255,255,255,0.03)', 
+                borderRadius: 2, 
+                border: '1px dashed rgba(255,255,255,0.1)',
+              }}
+            >
+              <Typography variant="overline" color="text.secondary" sx={{ display: 'block', mb: 1, lineHeight: 1.2, fontSize: '0.65rem' }}>
+                Metadata Preview (Live)
+              </Typography>
+              
+              <Tooltip title="This line is modified surgically in the IFC text file">
+                <Box sx={{ mb: 1.5 }}>
+                  <Typography variant="caption" sx={{ fontFamily: 'monospace', color: 'primary.main', fontWeight: 'bold', fontSize: '0.7rem' }}>
+                    #IFCSITE
+                  </Typography>
+                  <Typography variant="caption" sx={{ display: 'block', fontFamily: 'monospace', fontSize: '0.65rem', wordBreak: 'break-all', opacity: 0.6 }}>
+                    {preview.ifcSite}
+                  </Typography>
+                </Box>
+              </Tooltip>
+
+              <Tooltip title="Advanced projection and rotation data (IFC4)">
+                <Box>
+                  <Typography variant="caption" sx={{ fontFamily: 'monospace', color: 'secondary.main', fontWeight: 'bold', fontSize: '0.7rem' }}>
+                    #IFCMAPCONVERSION
+                  </Typography>
+                  <Typography variant="caption" sx={{ display: 'block', fontFamily: 'monospace', fontSize: '0.65rem', wordBreak: 'break-all', opacity: 0.6 }}>
+                    {preview.ifcMapConversion}
+                  </Typography>
+                </Box>
+              </Tooltip>
+            </Box>
+          );
+        })()}
+
         <Button
           fullWidth
           variant="text"

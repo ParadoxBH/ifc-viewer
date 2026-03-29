@@ -3,6 +3,7 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Environment, ContactShadows, Grid, PerspectiveCamera, Center, Text } from '@react-three/drei';
 import { Box, Typography } from '@mui/material';
 import * as THREE from 'three';
+import MapGround from './MapGround';
 
 import type { GeospatialState } from '../types';
 
@@ -39,16 +40,23 @@ const IFCViewer: React.FC<IFCViewerProps> = ({ model, geospatial }) => {
           <ambientLight intensity={0.5} />
           <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} intensity={1} castShadow />
           
-          <Grid 
-            infiniteGrid 
-            fadeDistance={50} 
-            fadeStrength={5} 
-            cellSize={1} 
-            sectionSize={10} 
-            sectionThickness={1.5} 
-            sectionColor="#333333" 
-            cellColor="#111111" 
-          />
+            <Grid 
+              infiniteGrid 
+              fadeDistance={100} 
+              fadeStrength={10} 
+              cellSize={1} 
+              sectionSize={10} 
+              sectionThickness={1.5} 
+              sectionColor="#444444" 
+              cellColor="#222222" 
+              position={[0, 0.01, 0]} // Slightly above map ground
+            />
+            
+            <MapGround 
+              latitude={geospatial.latitude} 
+              longitude={geospatial.longitude} 
+              rotation={geospatial.rotation} 
+            />
 
           {/* North Arrow / Compass */}
           <group position={[5, 0, 5]}>

@@ -9,7 +9,7 @@ import type { GeospatialState } from './types';
 import { defaultGeospatialState } from './types';
 
 const App: React.FC = () => {
-  const { model, loading, loadIFC, loadIFCFromUrl, exportIFC } = useIFC();
+  const { model, loading, loadIFC, loadIFCFromUrl, exportIFC, getMetadataPreview } = useIFC();
   const [geospatial, setGeospatial] = useState<GeospatialState>(defaultGeospatialState);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -96,6 +96,7 @@ const App: React.FC = () => {
             state={geospatial} 
             onChange={setGeospatial} 
             onReset={handleReset} 
+            getMetadataPreview={getMetadataPreview}
           />
         </AnimatePresence>
       </Box>

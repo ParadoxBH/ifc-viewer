@@ -6,6 +6,7 @@ import { type GeospatialState, defaultGeospatialState } from '../types';
 export const useIFC = () => {
   const [model, setModel] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [originalFileContent, setOriginalFileContent] = useState<string | null>(null);
   const [ifcLoader] = useState(() => {
     const loader = new IFCLoader();
     loader.ifcManager.useWebWorkers(false);
@@ -23,35 +24,21 @@ export const useIFC = () => {
   };
 
   const DMSToDecimal = (dmsArray: any): number => {
-    // web-ifc returns an array of objects/values for RefLatitude/RefLongitude
     if (!dmsArray || !Array.isArray(dmsArray)) return 0;
-    const d = dmsArray[0]?.value ?? 0;
-    const m = dmsArray[1]?.value ?? 0;
-    const s = dmsArray[2]?.value ?? 0;
-    const ms = dmsArray[3]?.value ?? 0;
+    
+    // Safely extract value whether it is a primitive number or an object {value: X, type: Y}
+    const extract = (val: any) => (val !== null && typeof val === 'object' && 'value' in val) ? val.value : val;
+
+    const d = Number(extract(dmsArray[0])) || 0;
+    const m = Number(extract(dmsArray[1])) || 0;
+    const s = Number(extract(dmsArray[2])) || 0;
+    const ms = Number(extract(dmsArray[3])) || 0;
+    
     const isNegative = d < 0;
     const decimal = Math.abs(d) + m / 60 + s / 3600 + ms / 3600000000;
     return isNegative ? -decimal : decimal;
   };
 
-  // Helper to find the project's representation context (usually where the geospatial info is anchored)
-  const findModelContext = async (modelID: number): Promise<number | null> => {
-    try {
-      const ifc = ifcLoader.ifcManager;
-      const contexts = await ifc.getAllItemsOfType(modelID, WEBIFC.IFCGEOMETRICREPRESENTATIONCONTEXT, false);
-      for (const ctxID of contexts) {
-        const ctx = await ifc.getItemProperties(modelID, ctxID);
-        // We look for the main 'Model' context
-        if (ctx.ContextType?.value === 'Model') {
-          return ctxID;
-        }
-      }
-      return contexts.length > 0 ? contexts[0] : null;
-    } catch (err) {
-      console.error('Failed to find model context:', err);
-      return null;
-    }
-  };
 
   // Function to extract geospatial data from the loaded model
   const extractGeospatialData = async (modelID: number): Promise<GeospatialState> => {
@@ -113,11 +100,17 @@ export const useIFC = () => {
       const sites = await ifc.getAllItemsOfType(modelID, WEBIFC.IFCSITE, false);
       if (sites.length > 0) {
         const site = await ifc.getItemProperties(modelID, sites[0]);
+        const extract = (val: any) => (val !== null && typeof val === 'object' && 'value' in val) ? val.value : val;
+        
+        const latVal = extract(site.RefLatitude);
+        const lonVal = extract(site.RefLongitude);
+        const altVal = extract(site.RefElevation);
+
         return {
           ...defaultGeospatialState,
-          orthogonalHeight: site.RefElevation?.value || 0,
-          latitude: site.RefLatitude?.value ? DMSToDecimal(site.RefLatitude.value) : defaultGeospatialState.latitude,
-          longitude: site.RefLongitude?.value ? DMSToDecimal(site.RefLongitude.value) : defaultGeospatialState.longitude,
+          orthogonalHeight: Number(altVal) || 0,
+          latitude: latVal ? DMSToDecimal(latVal) : defaultGeospatialState.latitude,
+          longitude: lonVal ? DMSToDecimal(lonVal) : defaultGeospatialState.longitude,
         };
       }
     } catch (err) {
@@ -129,6 +122,10 @@ export const useIFC = () => {
   const loadIFC = useCallback(async (file: File): Promise<GeospatialState | null> => {
     setLoading(true);
     await ifcLoader.ifcManager.setWasmPath('/wasm/');
+
+    // Store original text for text-based surgery during export
+    const text = await file.text();
+    setOriginalFileContent(text);
 
     return new Promise((resolve) => {
       const url = URL.createObjectURL(file);
@@ -149,6 +146,15 @@ export const useIFC = () => {
     setLoading(true);
     await ifcLoader.ifcManager.setWasmPath('/wasm/');
 
+    // For template URLs, we also need the text
+    try {
+      const response = await fetch(url);
+      const text = await response.text();
+      setOriginalFileContent(text);
+    } catch (err) {
+      console.warn('Failed to pre-cache IFC text from URL:', err);
+    }
+
     return new Promise((resolve) => {
       ifcLoader.load(url, async (ifcModel) => {
         setModel(ifcModel);
@@ -164,109 +170,142 @@ export const useIFC = () => {
   }, [ifcLoader]);
 
   const exportIFC = useCallback(async (state: GeospatialState) => {
-    if (!model) return;
+    if (!originalFileContent) {
+      alert('Arquivo original não encontrado na memória. Por favor, recarregue o arquivo IFC.');
+      return;
+    }
 
     try {
       setLoading(true);
-      const ifc = ifcLoader.ifcManager;
-      const modelID = model.modelID;
 
-      // 1. Convert rotation back to Abscissa/Ordinate
-      const rotationInRadians = (state.rotation * Math.PI) / 180;
-      const xAxisAbscissa = Math.cos(rotationInRadians);
-      const xAxisOrdinate = Math.sin(rotationInRadians);
-
-      // 2. Find or create georeferencing entities
-      const mapConversions = await ifc.getAllItemsOfType(modelID, WEBIFC.IFCMAPCONVERSION, false);
-      
-      if (mapConversions.length > 0) {
-        // Update existing record
-        const mcID = mapConversions[0];
-        const mc = await ifc.getItemProperties(modelID, mcID);
+      // Função cirúrgica para substituir argumentos no IFCSITE
+      const updateIfcSite = (content: string) => {
+        console.log('Starting surgical update of IFC text content...');
         
-        mc.Eastings = { type: 4, value: state.eastings };
-        mc.Northings = { type: 4, value: state.northings };
-        mc.OrthogonalHeight = { type: 4, value: state.orthogonalHeight };
-        mc.XAxisAbscissa = { type: 4, value: xAxisAbscissa };
-        mc.XAxisOrdinate = { type: 4, value: xAxisOrdinate };
-        mc.Scale = { type: 4, value: state.scale };
-
-        await ifc.ifcAPI.WriteLine(modelID, mc);
-
-        // Also update CRS if it exists
-        if (mc.TargetCRS?.value) {
-          const crs = await ifc.getItemProperties(modelID, mc.TargetCRS.value);
-          crs.Name = { type: 1, value: state.crsName };
-          crs.Description = { type: 1, value: state.crsDescription };
-          crs.GeodeticDatum = { type: 1, value: state.geodeticDatum };
-          crs.MapProjection = { type: 1, value: state.mapProjection };
-          await ifc.ifcAPI.WriteLine(modelID, crs);
-        }
-      } else {
-        // Create new records
-        const contextID = await findModelContext(modelID);
-        if (!contextID) {
-          throw new Error('Could not find a suitable Geometric Representation Context for georeferencing.');
-        }
-
-        // 2a. Create Projected CRS
-        // Args: Name, Description, GeodeticDatum, VerticalDatum, MapProjection, MapZone, MapUnit
-        const crsID = (ifc.ifcAPI as any).CreateIfcEntity(modelID, WEBIFC.IFCPROJECTEDCRS,
-          { type: 1, value: state.crsName },
-          { type: 1, value: state.crsDescription },
-          { type: 1, value: state.geodeticDatum },
-          null,
-          { type: 1, value: state.mapProjection },
-          null,
-          null
-        );
-
-        // 2b. Create Map Conversion
-        // Args: SourceCRS, TargetCRS, Eastings, Northings, OrthogonalHeight, XAxisAbscissa, XAxisOrdinate, Scale
-        (ifc.ifcAPI as any).CreateIfcEntity(modelID, WEBIFC.IFCMAPCONVERSION,
-          { type: 5, value: contextID },
-          { type: 5, value: crsID },
-          { type: 4, value: state.eastings },
-          { type: 4, value: state.northings },
-          { type: 4, value: state.orthogonalHeight },
-          { type: 4, value: xAxisAbscissa },
-          { type: 4, value: xAxisOrdinate },
-          { type: 4, value: state.scale }
-        );
-      }
-
-      // 2c. Update IfcSite for Lat/Long
-      const sites = await ifc.getAllItemsOfType(modelID, WEBIFC.IFCSITE, false);
-      if (sites.length > 0) {
-        const siteID = sites[0];
-        const site = await ifc.getItemProperties(modelID, siteID);
+        // Regex mais flexível para encontrar a linha IFCSITE: #ID= IFCSITE(...)
+        const ifcSiteRegex = /(#\d+\s*=\s*IFCSITE\s*\()([\s\S]*?)(\)\s*;\s*)/gi;
         
-        const latDMS = decimalToDMS(state.latitude);
-        const lonDMS = decimalToDMS(state.longitude);
+        let found = false;
+        const newContent = content.replace(ifcSiteRegex, (_match, prefix, argsPart, suffix) => {
+          found = true;
+          const args: string[] = [];
+          let current = '';
+          let depth = 0;
+          let inQuote = false;
 
-        site.RefLatitude = { type: 4, value: latDMS.map(v => ({ type: 2, value: v })) };
-        site.RefLongitude = { type: 4, value: lonDMS.map(v => ({ type: 2, value: v })) };
-        site.RefElevation = { type: 2, value: state.orthogonalHeight };
+          for (let i = 0; i < argsPart.length; i++) {
+            const char = argsPart[i];
+            if (char === "'" && (i === 0 || argsPart[i-1] !== "\\")) inQuote = !inQuote;
+            if (!inQuote) {
+              if (char === '(') depth++;
+              if (char === ')') depth--;
+            }
+            if (char === ',' && depth === 0 && !inQuote) {
+              args.push(current.trim());
+              current = '';
+            } else {
+              current += char;
+            }
+          }
+          args.push(current.trim());
 
-        await ifc.ifcAPI.WriteLine(modelID, site);
-      }
+          const latDMS = decimalToDMS(state.latitude).map(v => Math.round(v));
+          const lonDMS = decimalToDMS(state.longitude).map(v => Math.round(v));
 
-      // 3. Export as blob
-      const data = (ifc.ifcAPI as any).SaveModel(modelID);
+          if (args.length >= 12) {
+            args[9] = `(${latDMS.join(',')})`;
+            args[10] = `(${lonDMS.join(',')})`;
+            args[11] = state.orthogonalHeight.toFixed(6);
+          }
+          return `${prefix}${args.join(',')}${suffix}`;
+        });
 
-      const blob = new Blob([data], { type: 'text/plain' });
+        if (!found) console.warn('IFCSITE not found');
+        return newContent;
+      };
+
+      const finalContent = updateIfcSite(originalFileContent);
+
+      // Função cirúrgica secundária para IFCMAPCONVERSION (IFC4)
+      const updateIfcMapConversion = (content: string) => {
+        const mcRegex = /(#\d+\s*=\s*IFCMAPCONVERSION\s*\()([\s\S]*?)(\)\s*;\s*)/gi;
+        
+        let found = false;
+        const newContent = content.replace(mcRegex, (_match, prefix, argsPart, suffix) => {
+          found = true;
+          const args: string[] = [];
+          let current = '';
+          let depth = 0;
+          let inQuote = false;
+
+          for (let i = 0; i < argsPart.length; i++) {
+            const char = argsPart[i];
+            if (char === "'" && (i === 0 || argsPart[i-1] !== "\\")) inQuote = !inQuote;
+            if (!inQuote) {
+              if (char === '(') depth++;
+              if (char === ')') depth--;
+            }
+            if (char === ',' && depth === 0 && !inQuote) {
+              args.push(current.trim());
+              current = '';
+            } else {
+              current += char;
+            }
+          }
+          args.push(current.trim());
+
+          const rotationInRadians = (state.rotation * Math.PI) / 180;
+          const xAxisAbscissa = Math.cos(rotationInRadians);
+          const xAxisOrdinate = Math.sin(rotationInRadians);
+
+          if (args.length >= 8) {
+            args[2] = state.eastings.toFixed(6);
+            args[3] = state.northings.toFixed(6);
+            args[4] = state.orthogonalHeight.toFixed(6);
+            args[5] = xAxisAbscissa.toFixed(8);
+            args[6] = xAxisOrdinate.toFixed(8);
+            args[7] = state.scale.toFixed(6);
+          }
+          return `${prefix}${args.join(',')}${suffix}`;
+        });
+
+        if (!found) console.warn('IFCMAPCONVERSION not found');
+        return newContent;
+      };
+
+      const trulyFinalContent = updateIfcMapConversion(finalContent);
+
+      const blob = new Blob([trulyFinalContent], { type: 'text/plain' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = 'geospatialized_model.ifc';
+      link.download = 'georeferenced_model.ifc';
+      document.body.appendChild(link);
       link.click();
+      document.body.removeChild(link);
       setLoading(false);
     } catch (err) {
-      console.error('Export failed:', err);
-      alert('Export failed. See console for details.');
+      console.error('Export failed details:', err);
+      alert('Falha na exportação. Verifique o console para detalhes.');
       setLoading(false);
     }
-  }, [model, ifcLoader, findModelContext]);
+  }, [originalFileContent]);
 
-  return { model, loading, loadIFC, loadIFCFromUrl, exportIFC };
+  const getMetadataPreview = useCallback((state: GeospatialState) => {
+    if (!originalFileContent) return null;
+    
+    const latDMS = decimalToDMS(state.latitude).map(v => Math.round(v));
+    const lonDMS = decimalToDMS(state.longitude).map(v => Math.round(v));
+    
+    const rotationInRadians = (state.rotation * Math.PI) / 180;
+    const xAxisAbscissa = Math.cos(rotationInRadians);
+    const xAxisOrdinate = Math.sin(rotationInRadians);
+
+    return {
+      ifcSite: `IFCSITE(..., (${latDMS.join(',')}), (${lonDMS.join(',')}), ${state.orthogonalHeight.toFixed(2)}, ...)`,
+      ifcMapConversion: `IFCMAPCONVERSION(..., ${state.eastings.toFixed(2)}, ${state.northings.toFixed(2)}, ${state.orthogonalHeight.toFixed(2)}, ${xAxisAbscissa.toFixed(4)}, ${xAxisOrdinate.toFixed(4)}, ...)`
+    };
+  }, [originalFileContent]);
+
+  return { model, loading, loadIFC, loadIFCFromUrl, exportIFC, getMetadataPreview };
 };

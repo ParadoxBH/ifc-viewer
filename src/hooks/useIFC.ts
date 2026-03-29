@@ -131,7 +131,8 @@ export const useIFC = () => {
       }
 
       // 3. Export as blob
-      const data = await ifc.ifcAPI.ExportModelAsIFC(modelID);
+      const data = (ifc.ifcAPI as any).SaveModel(modelID);
+
       const blob = new Blob([data], { type: 'text/plain' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
